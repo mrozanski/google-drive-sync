@@ -1,28 +1,42 @@
 #!/usr/bin/env python3
-"""Google Drive to iCloud Sync - Phase 1: Simple Download Tool
+"""Google Drive to iCloud Sync - Phase 2: Incremental Sync Tool
 
-This tool downloads a Google Drive folder and converts files:
+This tool syncs a Google Drive folder to a local directory with:
+- Incremental sync (only changed files)
 - Google Docs → Markdown (.md)
-- Google Sheets → CSV (.csv)
-- Other files are skipped (Phase 1 limitation)
-
-This is a simple download tool without sync logic. Run it to download
-the entire folder structure. In Phase 2, we'll add incremental sync.
+- Google Sheets → CSV (.csv) with multi-sheet support
+- Regular file downloads
+- Deletion handling (moved to deleted-remotely/)
+- Metadata tracking and structured logging
 """
 
 import sys
+import argparse
 from pathlib import Path
 
 from config import load_config, ConfigError
-from auth import get_drive_service, AuthenticationError
+from auth import get_drive_service, get_sheets_service, AuthenticationError
 from drive_client import DriveClient, DriveClientError
-from downloader import Downloader, DownloadError
+from sync_manager import SyncManager, SyncError
+from metadata import Metadata, MetadataError
+from sync_logger import SyncLogger
 
 
 def main():
-    """Main entry point for the download tool."""
+    """Main entry point for the sync tool."""
+    # Parse command-line arguments
+    parser = argparse.ArgumentParser(
+        description='Sync Google Drive folder to local directory'
+    )
+    parser.add_argument(
+        '--force-full',
+        action='store_true',
+        help='Force full sync (ignore metadata, download everything)'
+    )
+    args = parser.parse_args()
+
     print("=" * 60)
-    print("Google Drive Folder Download Tool - Phase 1")
+    print("Google Drive to iCloud Sync - Phase 2")
     print("=" * 60)
 
     try:
@@ -32,29 +46,61 @@ def main():
         print(f"   Source folder ID: {config.google_folder_id}")
         print(f"   Target directory: {config.target_directory}")
 
-        # Authenticate with Google Drive
-        print("\n🔐 Authenticating with Google Drive...")
-        service = get_drive_service(config.credentials_file, config.token_file)
+        # Initialize metadata and logger
+        metadata = Metadata(config.target_directory)
+        logger = SyncLogger(config.target_directory)
+
+        if args.force_full:
+            print("\n⚠️  Force full sync enabled - clearing metadata")
+            metadata.clear()
+
+        # Check if this is first sync
+        last_sync = metadata.get_last_sync_time()
+        if last_sync:
+            print(f"   Last sync: {last_sync}")
+        else:
+            print("   First sync - will download all files")
+
+        # Authenticate with Google Drive and Sheets
+        print("\n🔐 Authenticating with Google APIs...")
+        drive_service = get_drive_service(config.credentials_file, config.token_file)
+        sheets_service = get_sheets_service(config.credentials_file, config.token_file)
         print("   ✓ Authentication successful")
 
-        # Create Drive client
-        drive_client = DriveClient(service)
+        # Create Drive client with Sheets support
+        drive_client = DriveClient(drive_service, sheets_service)
 
-        # Create downloader
-        downloader = Downloader(drive_client, config.target_directory)
+        # Create sync manager
+        sync_manager = SyncManager(drive_client, config.target_directory, metadata)
 
-        # Download folder
-        print("\n⬇️  Starting download...")
-        print(f"   Note: Only Google Docs and Sheets will be downloaded")
-        print(f"   Other file types will be skipped in this version\n")
+        # Start sync
+        print("\n🔄 Starting sync...")
+        print(f"   Syncing: Google Docs, Sheets, and regular files\n")
 
-        downloader.download_folder(config.google_folder_id)
+        # Log sync start
+        logger.log_sync_start(config.google_folder_id)
+
+        # Collect all Drive file IDs for deletion detection
+        drive_file_ids = set()
+
+        # Sync folder recursively
+        sync_manager.sync_folder(config.google_folder_id, drive_file_ids=drive_file_ids)
+
+        # Handle deletions
+        sync_manager.handle_deletions(drive_file_ids)
+
+        # Save metadata
+        metadata.save()
 
         # Print summary
-        downloader.print_summary()
+        sync_manager.print_summary()
 
-        print("\n✨ Download complete!")
-        print(f"\nFiles saved to: {config.target_directory}")
+        # Log sync end
+        logger.log_sync_end(sync_manager.stats)
+
+        print("\n✨ Sync complete!")
+        print(f"\nFiles synced to: {config.target_directory}")
+        print(f"Log file: {logger.get_log_path()}")
 
         return 0
 
@@ -67,15 +113,23 @@ def main():
     except AuthenticationError as e:
         print(f"\n❌ Authentication Error:")
         print(f"   {e}")
+        print(f"\nNote: Phase 2 requires both Drive and Sheets API access.")
+        print(f"If you see permission errors, delete token.json and re-authenticate.")
         return 1
 
-    except (DriveClientError, DownloadError) as e:
-        print(f"\n❌ Download Error:")
+    except (DriveClientError, SyncError, MetadataError) as e:
+        print(f"\n❌ Sync Error:")
         print(f"   {e}")
         return 1
 
     except KeyboardInterrupt:
-        print("\n\n⚠️  Download interrupted by user")
+        print("\n\n⚠️  Sync interrupted by user")
+        print(f"   Partial progress has been saved")
+        # Try to save metadata even on interrupt
+        try:
+            metadata.save()
+        except:
+            pass
         return 130
 
     except Exception as e:

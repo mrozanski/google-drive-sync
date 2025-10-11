@@ -28,13 +28,15 @@ class DriveClient:
         'spreadsheet': 'text/csv',
     }
 
-    def __init__(self, service):
+    def __init__(self, service, sheets_service=None):
         """Initialize Drive client with authenticated service.
 
         Args:
             service: Authenticated Google Drive API service
+            sheets_service: Authenticated Google Sheets API service (optional)
         """
         self.service = service
+        self.sheets_service = sheets_service
 
     def list_files(self, folder_id: str, page_size: int = 100) -> List[Dict[str, Any]]:
         """List all files in a folder (non-recursive).
@@ -182,6 +184,39 @@ class DriveClient:
         except HttpError as e:
             raise DriveClientError(f"Failed to export Google Sheet {file_id}: {e}")
 
+    def export_sheet_tab(self, file_id: str, sheet_id: int) -> bytes:
+        """Export a specific sheet tab as CSV.
+
+        Args:
+            file_id: Google Drive file ID
+            sheet_id: Sheet ID (gid) to export
+
+        Returns:
+            File content as bytes
+
+        Raises:
+            DriveClientError: If export fails
+        """
+        try:
+            # Use Drive API export with gid parameter
+            # Note: This uses a direct HTTP request with the gid parameter
+            import requests
+            from google.auth.transport.requests import AuthorizedSession
+
+            # Get credentials from the service
+            authed_session = AuthorizedSession(self.service._http.credentials)
+
+            # Build export URL with gid
+            url = f"https://docs.google.com/spreadsheets/d/{file_id}/export?format=csv&gid={sheet_id}"
+
+            response = authed_session.get(url)
+            response.raise_for_status()
+
+            return response.content
+
+        except Exception as e:
+            raise DriveClientError(f"Failed to export sheet tab {sheet_id} from {file_id}: {e}")
+
     def get_sheet_tabs(self, file_id: str) -> List[Dict[str, Any]]:
         """Get all sheet tabs/names from a Google Spreadsheet.
 
@@ -192,17 +227,36 @@ class DriveClient:
             List of sheet information (title, sheetId, index)
 
         Raises:
-            DriveClientError: If API call fails
+            DriveClientError: If API call fails or Sheets API not available
         """
-        try:
-            # We need to use the Sheets API for this, which requires different setup
-            # For Phase 1, we'll export the entire spreadsheet as one CSV
-            # In Phase 2, we can add proper multi-sheet support
-            # For now, return a placeholder
+        if not self.sheets_service:
+            # Fallback: return single sheet if Sheets API not available
             return [{'title': 'Sheet1', 'sheetId': 0, 'index': 0}]
 
+        try:
+            # Get spreadsheet metadata using Sheets API
+            spreadsheet = self._execute_with_retry(
+                lambda: self.sheets_service.spreadsheets().get(
+                    spreadsheetId=file_id,
+                    fields='sheets(properties(sheetId,title,index))'
+                ).execute()
+            )
+
+            sheets = []
+            for sheet in spreadsheet.get('sheets', []):
+                props = sheet.get('properties', {})
+                sheets.append({
+                    'title': props.get('title', 'Sheet1'),
+                    'sheetId': props.get('sheetId', 0),
+                    'index': props.get('index', 0)
+                })
+
+            return sheets if sheets else [{'title': 'Sheet1', 'sheetId': 0, 'index': 0}]
+
         except Exception as e:
-            raise DriveClientError(f"Failed to get sheet tabs: {e}")
+            # If Sheets API fails, fall back to single sheet
+            print(f"     Warning: Could not get sheet tabs, using single export: {e}")
+            return [{'title': 'Sheet1', 'sheetId': 0, 'index': 0}]
 
     def download_file(self, file_id: str) -> bytes:
         """Download a regular (non-Google Workspace) file.
@@ -245,14 +299,14 @@ class DriveClient:
     def is_supported_file(self, mime_type: str) -> bool:
         """Check if file type is supported for sync.
 
-        Currently only Google Docs and Sheets are supported.
-        Regular files are ignored in Phase 1.
+        Supports Google Docs and Sheets (for conversion).
+        Folders are handled separately.
 
         Args:
             mime_type: File MIME type
 
         Returns:
-            True if file should be synced
+            True if file should be synced (Docs and Sheets only)
         """
         return self.is_google_doc(mime_type) or self.is_google_sheet(mime_type)
 

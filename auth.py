@@ -10,7 +10,11 @@ from googleapiclient.discovery import build
 
 # Scopes define what access we're requesting
 # https://www.googleapis.com/auth/drive.readonly - read-only access to Drive
-SCOPES = ['https://www.googleapis.com/auth/drive.readonly']
+# https://www.googleapis.com/auth/spreadsheets.readonly - read-only access to Sheets
+SCOPES = [
+    'https://www.googleapis.com/auth/drive.readonly',
+    'https://www.googleapis.com/auth/spreadsheets.readonly'
+]
 
 
 class AuthenticationError(Exception):
@@ -103,3 +107,24 @@ def get_drive_service(credentials_file: Path, token_file: str = "token.json"):
         return service
     except Exception as e:
         raise AuthenticationError(f"Failed to build Drive service: {e}")
+
+
+def get_sheets_service(credentials_file: Path, token_file: str = "token.json"):
+    """Get authenticated Google Sheets service.
+
+    Args:
+        credentials_file: Path to the OAuth2 credentials JSON file
+        token_file: Path to store the token (default: token.json)
+
+    Returns:
+        Resource: Google Sheets API service instance
+
+    Raises:
+        AuthenticationError: If authentication fails
+    """
+    creds = authenticate(credentials_file, token_file)
+    try:
+        service = build('sheets', 'v4', credentials=creds)
+        return service
+    except Exception as e:
+        raise AuthenticationError(f"Failed to build Sheets service: {e}")
