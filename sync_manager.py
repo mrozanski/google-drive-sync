@@ -90,13 +90,9 @@ class SyncManager:
                         self.stats['unchanged'] += 1
 
                 else:
-                    # For Phase 2, we'll download regular files
-                    # For now, check if they've changed
-                    if self.metadata.is_file_changed(file_id, modified_time):
-                        self._sync_regular_file(file, current_path)
-                    else:
-                        print(f"  ⏭️  Unchanged: {file_name}")
-                        self.stats['unchanged'] += 1
+                    # Skip unsupported file types (we only sync Google Docs and Sheets)
+                    print(f"  ⏭️  Skipping unsupported file: {file_name} ({mime_type})")
+                    self.stats['unchanged'] += 1
 
         except Exception as e:
             self.stats['errors'] += 1
@@ -156,42 +152,6 @@ class SyncManager:
             # Update metadata
             file_type = 'doc' if self.drive_client.is_google_doc(mime_type) else 'sheet'
             self.metadata.add_file(file_id, rel_path, modified_time, file_type)
-
-            if is_new:
-                self.stats['new'] += 1
-            else:
-                self.stats['updated'] += 1
-
-        except Exception as e:
-            print(f"  ✗ Error syncing {file_name}: {e}")
-            self.stats['errors'] += 1
-
-    def _sync_regular_file(self, file: Dict[str, Any], current_path: Path) -> None:
-        """Sync a regular (non-Google Workspace) file.
-
-        Args:
-            file: File metadata from Drive
-            current_path: Current local path
-        """
-        file_id = file['id']
-        file_name = file['name']
-        modified_time = file['modifiedTime']
-        size = file.get('size')
-
-        is_new = self.metadata.get_file(file_id) is None
-        action = "New" if is_new else "Updated"
-
-        try:
-            print(f"  📄 {action}: {file_name}")
-            content = self.drive_client.download_file(file_id)
-
-            output_file = current_path / file_name
-            output_file.write_bytes(content)
-
-            rel_path = str(output_file.relative_to(self.target_dir))
-            self.metadata.add_file(file_id, rel_path, modified_time, 'file', size)
-
-            print(f"     ✓ Saved: {file_name}")
 
             if is_new:
                 self.stats['new'] += 1

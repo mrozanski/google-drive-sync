@@ -5,9 +5,10 @@ This tool syncs a Google Drive folder to a local directory with:
 - Incremental sync (only changed files)
 - Google Docs → Markdown (.md)
 - Google Sheets → CSV (.csv) with multi-sheet support
-- Regular file downloads
 - Deletion handling (moved to deleted-remotely/)
 - Metadata tracking and structured logging
+
+Note: Only Google Docs and Sheets are synced. Other file types are skipped.
 """
 
 import sys
@@ -75,7 +76,7 @@ def main():
 
         # Start sync
         print("\n🔄 Starting sync...")
-        print(f"   Syncing: Google Docs, Sheets, and regular files\n")
+        print(f"   Syncing: Google Docs and Sheets only\n")
 
         # Log sync start
         logger.log_sync_start(config.google_folder_id)
