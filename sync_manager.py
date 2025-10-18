@@ -35,6 +35,7 @@ class SyncManager:
         self.stats = {
             'new': 0,
             'updated': 0,
+            'moved': 0,
             'deleted': 0,
             'unchanged': 0,
             'errors': 0,
@@ -82,9 +83,14 @@ class SyncManager:
                     self.sync_folder(file_id, subfolder_path, drive_file_ids)
 
                 elif self.drive_client.is_supported_file(mime_type):
-                    # Check if file needs syncing
-                    if self.metadata.is_file_changed(file_id, modified_time):
+                    # Check if file needs syncing or has moved
+                    needs_sync = self.metadata.is_file_changed(file_id, modified_time)
+                    has_moved = self._check_if_file_moved(file_id, file_name, current_path)
+                    
+                    if needs_sync:
                         self._sync_file(file, current_path)
+                    elif has_moved:
+                        self._move_file(file, current_path)
                     else:
                         print(f"  ⏭️  Unchanged: {file_name}")
                         self.stats['unchanged'] += 1
@@ -121,6 +127,99 @@ class SyncManager:
             except Exception as e:
                 print(f"  ✗ Error moving deleted file: {e}")
                 self.stats['errors'] += 1
+
+    def _check_if_file_moved(self, file_id: str, file_name: str, current_path: Path) -> bool:
+        """Check if a file has been moved to a different location.
+
+        Args:
+            file_id: Google Drive file ID
+            file_name: File name
+            current_path: Current local path where file should be
+
+        Returns:
+            True if file exists in metadata but at a different path
+        """
+        file_meta = self.metadata.get_file(file_id)
+        if not file_meta:
+            return False
+
+        # Determine expected path based on file type
+        file_type = file_meta.get('type')
+        if file_type == 'doc':
+            expected_rel_path = str((current_path / f"{file_name}.md").relative_to(self.target_dir))
+        elif file_type == 'sheet':
+            expected_rel_path = str((current_path / f"{file_name}.csv").relative_to(self.target_dir))
+        else:
+            expected_rel_path = str((current_path / file_name).relative_to(self.target_dir))
+
+        stored_path = file_meta.get('path')
+        return stored_path != expected_rel_path
+
+    def _move_file(self, file: Dict[str, Any], new_path: Path) -> None:
+        """Move a file that has been relocated in Drive.
+
+        Args:
+            file: File metadata from Drive
+            new_path: New local path for the file
+        """
+        file_id = file['id']
+        file_name = file['name']
+        modified_time = file['modifiedTime']
+
+        file_meta = self.metadata.get_file(file_id)
+        if not file_meta:
+            return
+
+        try:
+            # Get old path
+            old_rel_path = file_meta['path']
+            old_full_path = self.target_dir / old_rel_path
+
+            # Determine file extension and new path
+            file_type = file_meta.get('type')
+            if file_type == 'doc':
+                new_file_name = f"{file_name}.md"
+            elif file_type == 'sheet':
+                new_file_name = f"{file_name}.csv"
+            else:
+                new_file_name = file_name
+
+            new_full_path = new_path / new_file_name
+            new_rel_path = str(new_full_path.relative_to(self.target_dir))
+
+            # Move the file if it exists
+            if old_full_path.exists():
+                # Ensure target directory exists
+                new_full_path.parent.mkdir(parents=True, exist_ok=True)
+                
+                # Move the file
+                shutil.move(str(old_full_path), str(new_full_path))
+                print(f"  📦 Moved: {file_name}")
+                print(f"     From: {old_rel_path}")
+                print(f"     To: {new_rel_path}")
+
+                # For multi-sheet spreadsheets, also move related sheet files
+                if file_type == 'sheet':
+                    old_dir = old_full_path.parent
+                    old_base = old_full_path.stem  # filename without .csv
+                    # Find all related sheet files (e.g., "filename-Sheet1.csv", "filename-Sheet2.csv")
+                    for related_file in old_dir.glob(f"{old_base}-*.csv"):
+                        sheet_suffix = related_file.name[len(old_base):]  # e.g., "-Sheet1.csv"
+                        new_related_path = new_full_path.parent / f"{new_full_path.stem}{sheet_suffix}"
+                        shutil.move(str(related_file), str(new_related_path))
+                        print(f"     Also moved: {related_file.name} → {new_related_path.name}")
+
+                # Update metadata with new path
+                self.metadata.add_file(file_id, new_rel_path, modified_time, file_type)
+                self.stats['moved'] += 1
+            else:
+                # File doesn't exist locally, treat as new
+                print(f"  ⚠️  File moved but not found locally, re-syncing: {file_name}")
+                self._sync_file(file, new_path)
+
+        except Exception as e:
+            print(f"  ✗ Error moving {file_name}: {e}")
+            self.stats['errors'] += 1
 
     def _sync_file(self, file: Dict[str, Any], current_path: Path) -> None:
         """Sync a Google Workspace file (Doc or Sheet).
@@ -272,6 +371,7 @@ class SyncManager:
         print("=" * 50)
         print(f"  ✨ New files:      {self.stats['new']}")
         print(f"  🔄 Updated files:  {self.stats['updated']}")
+        print(f"  📦 Moved files:    {self.stats['moved']}")
         print(f"  🗑️  Deleted files:  {self.stats['deleted']}")
         print(f"  ⏭️  Unchanged:      {self.stats['unchanged']}")
         print(f"  📁 Folders:        {self.stats['folders']}")
