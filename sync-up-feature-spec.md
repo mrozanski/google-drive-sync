@@ -1,3 +1,5 @@
+Outdated - replaced by interactive-cli-spec.md
+
 # Sync-Up Feature Specification
 
 **Feature**: Local Markdown → Google Docs Upload
