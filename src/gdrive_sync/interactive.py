@@ -38,11 +38,11 @@ def prompt_main_menu(status: StatusReport) -> str:
 
 
 def prompt_folder_search() -> str:
-    return questionary.text("Search for a Google Drive folder:").ask()
+    return questionary.text("Search for a Google Drive folder (Ctrl+C to exit):").ask()
 
 
 def prompt_select_from_list(header: str, options: list[str]) -> str:
-    return questionary.select(header, choices=options).ask()
+    return questionary.select(header, choices=[*options, "Exit"]).ask()
 
 
 def confirm_selection(label: str) -> bool:

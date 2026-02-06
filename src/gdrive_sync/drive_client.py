@@ -77,17 +77,32 @@ class DriveClient:
         except HttpError as exc:
             raise DriveClientError(f"Failed to list subfolders: {exc}")
 
-    def get_folder_path(self, folder_id: str) -> str:
+    def get_folder_path(self, folder_id: str, cache: Optional[Dict[str, Dict[str, Any]]] = None, ellipsis_threshold: int = 3) -> str:
+        """Return a human-readable path, memoizing parent lookups to cut API calls.
+
+        If the path depth exceeds `ellipsis_threshold`, compress the middle as "(...)".
+        """
+        cache = cache if cache is not None else {}
         parts: List[str] = []
         current = folder_id
+
         while current:
-            meta = self.service.files().get(fileId=current, fields="id, name, parents").execute()
+            if current in cache:
+                meta = cache[current]
+            else:
+                meta = self.service.files().get(fileId=current, fields="id, name, parents").execute()
+                cache[current] = meta
+
             parts.append(meta.get("name", ""))
             parents = meta.get("parents", [])
             if not parents:
                 break
             current = parents[0]
-        return " > ".join(reversed(parts))
+
+        parts = list(reversed(parts))
+        if len(parts) > ellipsis_threshold:
+            return f"{parts[0]} ... > {parts[-1]}"
+        return " > ".join(parts)
 
     # ---------- downloads ----------
     def export_google_doc(self, file_id: str) -> bytes:

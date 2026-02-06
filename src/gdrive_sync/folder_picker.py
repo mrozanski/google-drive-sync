@@ -4,6 +4,7 @@ from __future__ import annotations
 from typing import Tuple
 
 import questionary
+import typer
 
 from gdrive_sync.drive_client import DriveClient
 from gdrive_sync.interactive import confirm_selection, prompt_folder_search
@@ -14,6 +15,8 @@ def pick_folder(drive_client: DriveClient) -> Tuple[str, str, str]:
 
     Returns: (folder_id, folder_name, folder_path_display)
     """
+    cache: dict = {}
+
     while True:
         query = prompt_folder_search()
         if not query:
@@ -25,27 +28,31 @@ def pick_folder(drive_client: DriveClient) -> Tuple[str, str, str]:
 
         options = []
         for idx, folder in enumerate(matches, start=1):
-            path = drive_client.get_folder_path(folder["id"])
+            path = drive_client.get_folder_path(folder["id"], cache=cache)
             options.append({"name": f"{idx}. {folder['name']} ({path})", "value": folder})
 
-        selection = questionary.select("Found folders:", choices=options + ["Search again"]).ask()
+        selection = questionary.select("Found folders:", choices=options + ["Search again", "Exit"]).ask()
+        if selection == "Exit":
+            raise typer.Exit(code=0)
         if not selection or selection == "Search again":
             continue
 
         # navigate subfolders
         current = selection
         while True:
-            current_path = drive_client.get_folder_path(current["id"])
+            current_path = drive_client.get_folder_path(current["id"], cache=cache)
             subfolders = drive_client.list_subfolders(current["id"])
             choices = ["Use this folder (.)"]
             for sub in subfolders:
                 choices.append({"name": sub["name"], "value": sub})
-            choices.append("Search again")
+            choices.extend(["Search again", "Exit"])
             choice = questionary.select(
                 f"Folder: {current_path}\nSelect subfolder or '.' to use this folder",
                 choices=choices,
             ).ask()
 
+            if choice == "Exit":
+                raise typer.Exit(code=0)
             if choice == "Search again" or choice is None:
                 break
             if choice == "Use this folder (.)":
