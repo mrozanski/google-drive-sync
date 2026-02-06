@@ -40,6 +40,9 @@ def prompt_main_menu(status: StatusReport) -> str:
 def prompt_folder_search() -> str:
     return questionary.text("Search for a Google Drive folder (Ctrl+C to exit):").ask()
 
+def prompt_file_search() -> str:
+    return questionary.text("Search for a Google Drive file (Ctrl+C to exit):").ask()
+
 
 def prompt_select_from_list(header: str, options: list[str]) -> str:
     return questionary.select(header, choices=[*options, "Exit"]).ask()
@@ -53,4 +56,15 @@ def prompt_subfolder_choice(subfolders: list[str]) -> str:
     return questionary.select(
         "Select subfolder or '.' to use this folder",
         choices=[".", *subfolders, ".. (go back)"]
+    ).ask()
+
+
+def prompt_overwrite_action(path: str) -> str:
+    return questionary.select(
+        f"File '{path}' already exists. What would you like to do?",
+        choices=[
+            "Overwrite",
+            "Keep both (append timestamp)",
+            "Quit",
+        ],
     ).ask()

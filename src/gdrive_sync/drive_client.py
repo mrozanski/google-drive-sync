@@ -66,6 +66,23 @@ class DriveClient:
         except HttpError as exc:
             raise DriveClientError(f"Failed to search folders: {exc}")
 
+    def search_documents_and_sheets(self, query: str, page_size: int = 20) -> List[Dict[str, Any]]:
+        """Search for Google Docs and Sheets by name substring."""
+        try:
+            safe_query = query.replace("'", "\\'")
+            mime_filter = (
+                f"(mimeType='{self.MIME_TYPES['document']}' or mimeType='{self.MIME_TYPES['spreadsheet']}')"
+            )
+            response = self.service.files().list(
+                q=f"{mime_filter} and name contains '{safe_query}' and trashed=false",
+                spaces="drive",
+                pageSize=page_size,
+                fields="files(id, name, mimeType, parents, modifiedTime)",
+            ).execute()
+            return response.get("files", [])
+        except HttpError as exc:
+            raise DriveClientError(f"Failed to search files: {exc}")
+
     def list_subfolders(self, folder_id: str) -> List[Dict[str, Any]]:
         try:
             response = self.service.files().list(

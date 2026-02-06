@@ -3,15 +3,20 @@ from __future__ import annotations
 import sys
 from pathlib import Path
 from typing import Optional
+from datetime import datetime
 
 import typer
 from rich.console import Console
 
 from gdrive_sync.auth import AuthenticationError, get_drive_service, get_sheets_service
 from gdrive_sync.drive_client import DriveClient, DriveClientError
-from gdrive_sync.folder_picker import pick_folder
+from gdrive_sync.folder_picker import pick_folder, pick_file
 from gdrive_sync.global_config import GlobalConfig, GlobalConfigError
-from gdrive_sync.interactive import prompt_main_menu, prompt_uninitialized
+from gdrive_sync.interactive import (
+    prompt_main_menu,
+    prompt_uninitialized,
+    prompt_overwrite_action,
+)
 from gdrive_sync.local_config import LocalConfig, find_local_root
 from gdrive_sync.metadata import Metadata, MetadataError
 from gdrive_sync.status import collect_status
@@ -83,12 +88,54 @@ def _run_sync(local: LocalConfig, drive_client: DriveClient) -> None:
     _run_push(local, drive_client)
 
 
+def _write_file_with_prompt(path: Path, content: bytes) -> bool:
+    if path.exists():
+        action = prompt_overwrite_action(path.name)
+        if action == "Quit":
+            return False
+        if action == "Keep both (append timestamp)":
+            timestamp = datetime.utcnow().strftime("%Y%m%d%H%M%S")
+            path = path.with_name(f"{path.stem}-{timestamp}{path.suffix}")
+    path.write_bytes(content)
+    console.print(f"Saved {path}")
+    return True
+
+
+def _run_pull_file(output_dir: Path, drive_client: DriveClient) -> None:
+    file = pick_file(drive_client)
+    mime = file["mimeType"]
+    name = file["name"]
+
+    if drive_client.is_google_doc(mime):
+        content = drive_client.export_google_doc(file["id"])
+        target = output_dir / f"{name}.md"
+        _write_file_with_prompt(target, content)
+        return
+
+    if drive_client.is_google_sheet(mime):
+        sheets = drive_client.get_sheet_tabs(file["id"])
+        if len(sheets) == 1:
+            content = drive_client.export_google_sheet(file["id"])
+            target = output_dir / f"{name}.csv"
+            _write_file_with_prompt(target, content)
+        else:
+            for sheet in sheets:
+                content = drive_client.export_sheet_tab(file["id"], sheet["sheetId"])
+                target = output_dir / f"{name}-{sheet['title']}.csv"
+                if not _write_file_with_prompt(target, content):
+                    return
+        return
+
+    raise DriveClientError("Selected file is not a Google Doc or Sheet.")
+
+
 @app.callback(invoke_without_command=True)
 def entrypoint(
     ctx: typer.Context,
     pull: bool = typer.Option(False, "--pull", help="Download changes only"),
     push: bool = typer.Option(False, "--push", help="Upload local .md files only"),
     sync: bool = typer.Option(False, "--sync", help="Pull then push"),
+    pull_file: bool = typer.Option(False, "--pull-file", help="One-off download of a single Drive Doc/Sheet"),
 ) -> None:
     if ctx.invoked_subcommand:
         return
@@ -99,6 +146,14 @@ def entrypoint(
     except (AuthenticationError, GlobalConfigError) as exc:
         console.print(f"[red]{exc}[/red]")
         raise typer.Exit(code=1)
+
+    if pull_file:
+        try:
+            _run_pull_file(Path.cwd(), drive_client)
+        except (DriveClientError, SyncError, UploadError, MetadataError) as exc:
+            console.print(f"[red]{exc}[/red]")
+            raise typer.Exit(code=1)
+        return
 
     if pull or push or sync:
         local = _ensure_local_config()

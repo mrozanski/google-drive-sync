@@ -7,7 +7,7 @@ import questionary
 import typer
 
 from gdrive_sync.drive_client import DriveClient
-from gdrive_sync.interactive import confirm_selection, prompt_folder_search
+from gdrive_sync.interactive import confirm_selection, prompt_folder_search, prompt_file_search
 
 
 def pick_folder(drive_client: DriveClient) -> Tuple[str, str, str]:
@@ -63,3 +63,28 @@ def pick_folder(drive_client: DriveClient) -> Tuple[str, str, str]:
             current = choice
 
         # loop back to search again
+
+
+def pick_file(drive_client: DriveClient) -> dict:
+    """Interactive search + select a single Google Doc/Sheet."""
+    cache: dict = {}
+    while True:
+        query = prompt_file_search()
+        if not query:
+            raise typer.Exit(code=0)
+        matches = drive_client.search_documents_and_sheets(query)
+        if not matches:
+            print(f"No files found for '{query}'. Try again.")
+            continue
+
+        choices = []
+        for idx, file in enumerate(matches, start=1):
+            path = drive_client.get_folder_path(file["id"], cache=cache)
+            choices.append({"name": f"{idx}. {file['name']} ({path})", "value": file})
+        choices.extend(["Search again", "Exit"])
+        selection = questionary.select("Found files:", choices=choices).ask()
+        if selection == "Exit":
+            raise typer.Exit(code=0)
+        if selection == "Search again" or selection is None:
+            continue
+        return selection
