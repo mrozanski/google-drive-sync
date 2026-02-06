@@ -1,8 +1,14 @@
-"""Configuration management for Google Drive sync."""
+"""Legacy .env configuration helper (kept for backward compatibility)."""
 
 import os
 from pathlib import Path
-from dotenv import load_dotenv
+
+try:
+    from dotenv import load_dotenv  # type: ignore
+except Exception:  # pragma: no cover
+    def load_dotenv(*args, **kwargs):
+        """No-op fallback when python-dotenv is not installed."""
+        return None
 
 
 class ConfigError(Exception):
