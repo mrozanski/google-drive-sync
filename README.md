@@ -1,407 +1,81 @@
-# Google Drive to iCloud Sync
+# gdrive-sync
 
-A Python tool for incremental synchronization of Google Drive folders to local directories (e.g., iCloud Drive) with automatic file conversion.
+Interactive, globally-installable CLI that syncs a Google Drive folder to a local directory. Pulls Google Docs/Sheets down as Markdown/CSV, and can push new local `.md` files up to Drive (one-time handoff).
 
-## Status: Phase 2 Complete
-
-**Fully implemented features:**
-- [x] **Incremental sync** - Only downloads new or changed files
-- [x] **Google Docs** -> Markdown (.md)
-- [x] **Google Sheets** -> CSV (.csv) with **multi-sheet support**
-- [x] **Regular files** - PDFs, images, etc.
-- [x] **Deletion handling** - Moves deleted files to `deleted-remotely/`
-- [x] **Metadata tracking** - `.gdrive-sync/metadata.json`
-- [x] **Structured logging** - `.gdrive-sync/sync.log` with rotation
-- [x] **Folder hierarchy** preservation
-- [x] **Smart duplicate handling** - Automatic file renaming
-
-## Features
-
-- **Incremental Sync**: Only syncs changed files (compares modified times)
-- **OAuth2 Authentication**: Secure, user-based authentication with token refresh
-- **Automatic Conversion**: Google Docs/Sheets to portable formats
-- **Multi-Sheet Export**: Each sheet in a spreadsheet becomes a separate CSV
-- **Deletion Tracking**: Deleted Drive files moved to `deleted-remotely/` folder
-- **Metadata Management**: Tracks sync state for intelligent updates
-- **Structured Logging**: Detailed logs with timestamps and statistics
-- **Error Handling**: Robust error handling with retry logic
-- **Rate Limiting**: Built-in exponential backoff for API limits
+## What's inside
+- Interactive menus (`gdrive-sync`) for init/sync/status.
+- Non-interactive flags: `--pull`, `--push`, `--sync`, `init --folder-id`, `status`.
+- Folder picker with Drive search + subfolder navigation.
+- Global config at `~/.config/gdrive-sync/` (credentials + token).
+- Local metadata at `.gdrive-sync/metadata.json` (schema v3.0 with drive folder id/name/path).
+- Push support: scans for untracked `.md`, converts to HTML → Google Docs, mirrors folder structure, then tracks like remote files.
 
 ## Requirements
-
-- Python 3.8+
+- Python 3.13+ (project uses src layout)
 - `uv` package manager
-- Google Cloud Project with Drive API and Sheets API enabled
-- OAuth2 credentials
+- Google Cloud project with Drive API + Sheets API enabled
+- OAuth client credentials JSON (Desktop app)
 
-## Installation
-
-### 1. Clone the repository
-
+## Install
 ```bash
-cd /path/to/your/projects
-git clone <repository-url>
-cd google-drive-sync
+uv tool install .
+# creates ~/.local/bin/gdrive-sync (ensure it’s on PATH)
 ```
-
-### 2. Install dependencies with uv
-
+If you prefer a venv:
 ```bash
-# Initialize virtual environment
 uv venv
-
-# Install dependencies
-uv sync
+source .venv/bin/activate
+uv pip install -e .
 ```
 
-### 3. Set up Google Cloud Project
-
-1. **Create a Google Cloud Project**:
-   - Go to [Google Cloud Console](https://console.cloud.google.com/)
-   - Create a new project or select existing one
-
-2. **Enable APIs**:
-   - In the Cloud Console, go to "APIs & Services" > "Library"
-   - Search for and enable:
-     - **Google Drive API**
-     - **Google Sheets API**
-
-3. **Create OAuth2 Credentials**:
-   - Go to "APIs & Services" > "Credentials"
-   - Click "Create Credentials" > "OAuth client ID"
-   - Configure OAuth consent screen if prompted:
-     - User Type: External
-     - App name: "Google Drive Sync" (or your preference)
-     - Add your email as test user
-     - Scopes: Add `drive.readonly` and `spreadsheets.readonly`
-   - Application type: "Desktop app"
-   - Name: "Google Drive Sync Client"
-   - Download the credentials JSON file
-
-4. **Save credentials**:
-   ```bash
-   # Save to project directory (recommended)
-   mv ~/Downloads/client_secret_*.json /path/to/google-drive-sync/credentials.json
-   ```
-
-### 4. Configure the application
-
+## First-time setup (credentials)
+1) In Google Cloud Console create OAuth client (Desktop) and download the JSON.  
+2) Run:
 ```bash
-# Copy example configuration
-cp .env.example .env
-
-# Edit configuration
-nano .env  # or use your preferred editor
+gdrive-sync setup --credentials-file ./credentials.json
 ```
+This copies the credentials to `~/.config/gdrive-sync/credentials.json` and clears any cached token. The first authenticated command will open a browser to grant scopes:
+- `drive.readonly`
+- `drive.file`
+- `spreadsheets.readonly`
 
-Required configuration in `.env`:
-
+## Initialize a folder
+From the directory you want to sync:
 ```bash
-# Get folder ID from Google Drive URL:
-# https://drive.google.com/drive/folders/1abc...xyz
-GOOGLE_FOLDER_ID=1abc...xyz
-
-# Path to your OAuth2 credentials (can use relative path)
-GOOGLE_CREDENTIALS_FILE=./credentials.json
-
-# Target directory (can use ~ for home)
-TARGET_DIRECTORY=~/Library/Mobile Documents/com~apple~CloudDocs/MyProject
+gdrive-sync          # interactive init wizard
 ```
+You’ll search for a Drive folder, drill into subfolders, confirm, and the tool will download all supported files while creating `.gdrive-sync/metadata.json`.
 
-### 5. Find your Google Drive Folder ID
-
-1. Open Google Drive in your browser
-2. Navigate to the folder you want to sync
-3. Look at the URL: `https://drive.google.com/drive/folders/FOLDER_ID_HERE`
-4. Copy the folder ID and paste it into your `.env` file
-
-## Usage
-
-### First Run (Authentication)
-
-On first run, the tool will open a browser window for OAuth2 authentication:
-
+Non-interactive:
 ```bash
-uv run main.py
+gdrive-sync init --folder-id=<drive_folder_id>
 ```
 
-1. Browser will open automatically
-2. Sign in to your Google account
-3. Grant permissions to the app (Drive and Sheets read-only access)
-4. Token will be saved to `token.json` for future runs
+## Everyday commands
+- `gdrive-sync` : Interactive status + menu (sync/pull/push/view details).
+- `gdrive-sync --pull` : Download remote changes only.
+- `gdrive-sync --push` : Upload new local `.md` files only (one-time handoff).
+- `gdrive-sync --sync` : Pull then push.
+- `gdrive-sync status` : Show counts of remote new/changed/deleted and local untracked markdown.
 
-**Note**: You'll need to delete `token.json` and re-authenticate after upgrading from Phase 1 to Phase 2 to grant the additional Sheets API permission.
+## Push behavior (one-way handoff)
+- Any untracked `.md` under the synced root is uploaded as a Google Doc, preserving relative folders by creating missing Drive folders.
+- After upload, the file is tracked with its Drive ID like any remote file.
+- Drive remains source of truth: later pulls overwrite local edits to uploaded files.
 
-### Subsequent Runs (Incremental Sync)
-
-After authentication, simply run:
-
-```bash
-uv run main.py
-```
-
-The tool will:
-1. Load configuration and metadata from previous sync
-2. Authenticate using saved token
-3. Compare Drive files with local metadata
-4. Download only new or modified files
-5. Handle deletions (move to `deleted-remotely/`)
-6. Update metadata and logs
-7. Show sync summary
-
-### Force Full Sync
-
-To ignore metadata and re-download everything:
-
-```bash
-uv run main.py --force-full
-```
-
-### Output Example
-
-```
-============================================================
-Google Drive to iCloud Sync - Phase 2
-============================================================
-
-[*] Loading configuration...
-   Source folder ID: 1abc...xyz
-   Target directory: /Users/you/iCloud/MyProject
-   Last sync: 2025-10-10T12:30:15
-
-[*] Authenticating with Google APIs...
-   + Authentication successful
-
-[*] Starting sync...
-   Syncing: Google Docs, Sheets, and regular files
-
-[Folder] Syncing folder: .
-  [Doc] Syncing Doc: Meeting Notes
-     + Saved: Meeting Notes.md
-  [Sheet] Syncing Sheet: Q4 Budget
-     Found 3 sheets, exporting individually...
-     + Saved: Q4 Budget-Summary.csv
-     + Saved: Q4 Budget-Details.csv
-     + Saved: Q4 Budget-Charts.csv
-  [-] Unchanged: Project Plan.md
-  [File] New: photo.jpg
-     + Saved: photo.jpg
-
-[Delete] Processing 1 deleted file(s)...
-  [Delete] Moved to deleted: old-doc.md -> old-doc.md
-
-==================================================
-Sync Summary:
-==================================================
-  New files:      2
-  Updated files:  1
-  Deleted files:  1
-  Unchanged:      5
-  Folders:        3
-==================================================
-
-Sync complete!
-
-Files synced to: /Users/you/iCloud/MyProject
-Log file: /Users/you/iCloud/MyProject/.gdrive-sync/sync.log
-```
-
-## Project Structure
-
-```
-google-drive-sync/
-├── main.py              # Main orchestration
-├── auth.py              # OAuth2 authentication (Drive + Sheets)
-├── config.py            # Configuration management
-├── drive_client.py      # Google Drive & Sheets API wrapper
-├── sync_manager.py      # Incremental sync logic
-├── metadata.py          # Metadata management
-├── sync_logger.py       # Structured logging
-├── downloader.py        # Legacy Phase 1 downloader
-├── .env                 # Configuration (create from .env.example)
-├── .env.example         # Configuration template
-├── credentials.json     # OAuth2 credentials (download from Google)
-├── token.json           # OAuth token (created on first run)
-└── README.md            # This file
-
-target_directory/
-├── .gdrive-sync/
-│   ├── metadata.json    # Sync state tracking
-│   └── sync.log         # Operation history
-├── deleted-remotely/    # Files deleted from Drive
-├── [your synced files and folders]
-```
-
-## How It Works
-
-### Incremental Sync Logic
-
-1. **First Sync**: Downloads all files and creates metadata
-2. **Subsequent Syncs**:
-   - Compares Drive `modifiedTime` with stored metadata
-   - Downloads only new or changed files
-   - Skips unchanged files for performance
-   - Detects deletions and moves files to `deleted-remotely/`
-
-### Multi-Sheet Spreadsheets
-
-- Single-sheet spreadsheets: `filename.csv`
-- Multi-sheet spreadsheets: `filename-Sheet1.csv`, `filename-Sheet2.csv`, etc.
-
-### Deletion Handling
-
-- Files deleted from Drive are moved to `deleted-remotely/` folder
-- Duplicate names get incremental numbers: `file.md`, `file (2).md`
-- Original folder structure is not preserved for deleted files
-
-### Metadata Tracking
-
-`.gdrive-sync/metadata.json` stores:
-- File IDs and paths
-- Last modified times
-- File types
-- Last sync timestamp
-
-### Logging
-
-`.gdrive-sync/sync.log` includes:
-- Start/end timestamps
-- File operations (new, updated, deleted, skipped)
-- Error messages
-- Sync statistics
-- Automatic log rotation (keeps last 100KB)
+## Paths & config
+- Global: `~/.config/gdrive-sync/{credentials.json, token.json, config.json}`
+- Local (per repo): `.gdrive-sync/metadata.json`
 
 ## Troubleshooting
+- “command not found”: ensure `~/.local/bin` is on your PATH or activate the venv.
+- Auth issues: delete `~/.config/gdrive-sync/token.json` and rerun any command to re-auth.
+- Re-point to another Drive folder: rerun `gdrive-sync init --folder-id=...` in the target directory (will refresh metadata and pull).
 
-### Configuration Errors
-
-**Error: "Configuration missing: .env file not found"**
-- Create `.env` file from `.env.example`
-- Fill in all required values
-
-**Error: "GOOGLE_CREDENTIALS_FILE points to file that does not exist"**
-- Verify the path to your credentials JSON file
-- Use relative path (`./credentials.json`) or absolute path
-
-### Authentication Errors
-
-**Error: "Failed to authenticate"**
-- Verify credentials file is valid OAuth2 credentials
-- Check that you've enabled both Drive API and Sheets API in Cloud Console
-- Try deleting `token.json` and re-authenticating
-
-**Error: "Google Sheets API has not been enabled"**
-- Go to Google Cloud Console
-- Enable Google Sheets API in "APIs & Services" > "Library"
-- Wait 2-3 minutes for propagation
-
-**Permission errors after upgrading from Phase 1**
-- Delete `token.json`
-- Run `uv run main.py` to re-authenticate
-- Grant both Drive and Sheets permissions
-
-### Sync Errors
-
-**Error: "Failed to list files in folder"**
-- Verify folder ID is correct
-- Ensure you have access to the folder in Google Drive
-- Check that folder is not in Trash
-
-**Multi-sheet export not working**
-- Ensure Sheets API is enabled
-- Check that token has Sheets permissions
-- Single CSV fallback will be used if Sheets API fails
-
-**Files not syncing**
-- Check `.gdrive-sync/metadata.json` for file entries
-- Use `--force-full` to ignore metadata and re-sync everything
-- Check `.gdrive-sync/sync.log` for errors
-
-### Rate Limiting
-
-The tool automatically handles rate limits with exponential backoff. If you see "Rate limit/server error, retrying..." messages, the tool is working correctly.
-
-## Security Notes
-
-- **Credentials file**: Keep `credentials.json` secure, never commit to version control (.gitignore already configured)
-- **Token file**: `token.json` grants access to your Drive - keep it secure
-- **Read-only access**: Tool only requests read-only Drive and Sheets permissions
-- **Revoke access**: Can revoke from [Google Account Settings](https://myaccount.google.com/permissions)
-- **Metadata**: `.gdrive-sync/metadata.json` contains file paths and IDs but no file content
-
-## Automation
-
-### macOS launchd (recommended)
-
-Create `~/Library/LaunchAgents/com.user.gdrive-sync.plist`:
-
-```xml
-<?xml version="1.0" encoding="UTF-8"?>
-<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-<plist version="1.0">
-<dict>
-    <key>Label</key>
-    <string>com.user.gdrive-sync</string>
-    <key>ProgramArguments</key>
-    <array>
-        <string>/Users/YOU/.local/bin/uv</string>
-        <string>run</string>
-        <string>/Users/YOU/path/to/google-drive-sync/main.py</string>
-    </array>
-    <key>WorkingDirectory</key>
-    <string>/Users/YOU/path/to/google-drive-sync</string>
-    <key>StartInterval</key>
-    <integer>3600</integer>
-    <key>StandardErrorPath</key>
-    <string>/tmp/gdrive-sync.err</string>
-    <key>StandardOutPath</key>
-    <string>/tmp/gdrive-sync.out</string>
-</dict>
-</plist>
-```
-
-Load the agent:
-```bash
-launchctl load ~/Library/LaunchAgents/com.user.gdrive-sync.plist
-```
-
-## Development
-
-### Running with uv
-
-```bash
-# Normal sync
-uv run main.py
-
-# Force full sync
-uv run main.py --force-full
-
-# Run with Python directly
-uv run python main.py
-```
-
-### Testing
-
-Test with a small Google Drive folder first:
-1. Create a test folder with Docs, Sheets (multi-tab), and regular files
-2. Get its folder ID
-3. Point `TARGET_DIRECTORY` to a temporary location
-4. Run initial sync: `uv run main.py`
-5. Modify a file in Drive
-6. Run incremental sync: `uv run main.py`
-7. Verify only modified file was downloaded
-8. Delete a file in Drive
-9. Run sync and verify file moved to `deleted-remotely/`
-
-## License
-
-See LICENSE file for details.
-
-## Support
-
-For issues and questions:
-1. Check the Troubleshooting section above
-2. Review Google Cloud Console API enablement
-3. Verify `.env` configuration
-4. Check `.gdrive-sync/sync.log` for detailed error messages
-5. Try `--force-full` to reset sync state
+## Verification checklist
+1) `uv tool install .`
+2) `gdrive-sync setup --credentials-file ./credentials.json`
+3) In a new folder: `gdrive-sync` → init wizard completes and downloads files.
+4) Remote edits show up with `gdrive-sync --pull`.
+5) New local `.md` uploads with `gdrive-sync --push`.
+6) `gdrive-sync` shows interactive status/menu in an initialized folder.
